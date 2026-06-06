@@ -1,0 +1,4 @@
+/home/legion/CPP_Projects/Stonecraft/build/CMakeFiles/Stonecraft.dir
+/home/legion/CPP_Projects/Stonecraft/build/CMakeFiles/copy_resources.dir
+/home/legion/CPP_Projects/Stonecraft/build/CMakeFiles/edit_cache.dir
+/home/legion/CPP_Projects/Stonecraft/build/CMakeFiles/rebuild_cache.dir
