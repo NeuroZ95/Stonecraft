@@ -57,8 +57,8 @@ bool NetworkServer::start(uint16_t port, uint32_t seed, int type) {
         int s = (int)serverHost->socket;
 #endif
         struct sockaddr_in sin;
-        unsigned int len = sizeof(sin);
-        if (getsockname(s, (struct sockaddr*)&sin, (int*)&len) != -1) {
+        socklen_t len = sizeof(sin);
+        if (getsockname(s, (struct sockaddr*)&sin, &len) != -1) {
             activePort = ntohs(sin.sin_port);
             Logger::log(Logger::Level::INFO, "Server: Successfully bound to dynamically allocated port: " + std::to_string(activePort));
         }
