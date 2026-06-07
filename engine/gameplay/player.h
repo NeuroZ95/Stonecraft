@@ -24,6 +24,18 @@ public:
     block_t hotbar[HOTBAR_SIZE];
     int selectedSlot;
 
+    // Параметры здоровья игрока
+    int health;
+    int maxHealth;
+
+    // Дополнительные параметры механик здоровья
+    float highestY;     // Максимальная высота полета/падения (для расчета урона)
+    float regenTimer;   // Таймер восстановления здоровья
+
+    // Состояние смерти
+    bool isDead;
+    float deathTime;
+
     Player(glm::vec3 startPosition);
 
     void update(float deltaTime, World& world);

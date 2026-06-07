@@ -261,6 +261,16 @@ bool Menu::init() {
     btnShaderBack.isEnabled = true; btnShaderBack.isHovered = false; btnShaderBack.isPressed = false;
     shaderSelectButtons.push_back(btnShaderBack);
 
+    // Экран смерти / возрождения
+    Button btnRespawn;
+    btnRespawn.text = "Respawn";
+    btnRespawn.normalColor = normal;
+    btnRespawn.hoverColor = hover;
+    btnRespawn.pressedColor = pressed;
+    btnRespawn.disabledColor = disabled;
+    btnRespawn.isEnabled = true; btnRespawn.isHovered = false; btnRespawn.isPressed = false;
+    respawnButtons.push_back(btnRespawn);
+
     currentScreen = Screen::Main;
     return true;
 }
@@ -408,6 +418,15 @@ void Menu::update(float deltaTime) {
 
         activeButtons = &shaderSelectButtons;
     }
+    else if (currentScreen == Screen::Respawn) {
+        // Кнопка позиционируется строго по центру экрана
+        respawnButtons[0].x = centerX;
+        respawnButtons[0].y = (static_cast<float>(Window::height) - btnHeight) / 2.0f;
+        respawnButtons[0].width = btnWidth;
+        respawnButtons[0].height = btnHeight;
+
+        activeButtons = &respawnButtons;
+    }
 
     if (activeButtons) {
         for (auto& btn : *activeButtons) {
@@ -509,6 +528,7 @@ int Menu::handleMouseClick(double xpos, double ypos, int button, int action) {
     else if (currentScreen == Screen::Pause) activeButtons = &pauseButtons;
     else if (currentScreen == Screen::Settings) activeButtons = &settingsButtons;
     else if (currentScreen == Screen::ShaderSelect) activeButtons = &shaderSelectButtons;
+    else if (currentScreen == Screen::Respawn) activeButtons = &respawnButtons; // Подключаем обработку
 
     if (activeButtons && button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_RELEASE) {
         for (size_t i = 0; i < activeButtons->size(); ++i) {
@@ -638,6 +658,10 @@ void Menu::render() {
         if (currentScreen == Screen::Pause) {
             drawQuad(0.0f, 0.0f, static_cast<float>(Window::width), static_cast<float>(Window::height), glm::vec4(0.0f, 0.0f, 0.0f, 0.6f));
         }
+        else if (currentScreen == Screen::Respawn) {
+            // Отрисовываем легкую бордовую вуаль поверх. Полноценное окрашивание выполняется в шейдере мира
+            drawQuad(0.0f, 0.0f, static_cast<float>(Window::width), static_cast<float>(Window::height), glm::vec4(0.12f, 0.0f, 0.0f, 0.25f));
+        }
         else {
             drawQuad(0.0f, 0.0f, static_cast<float>(Window::width), static_cast<float>(Window::height), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         }
@@ -646,6 +670,10 @@ void Menu::render() {
         float titleScale = 1.5f * scaleMultiplier;
         if (currentScreen == Screen::Pause) {
             titleText = "GAME PAUSED";
+        }
+        else if (currentScreen == Screen::Respawn) {
+            titleText = "YOU DIED!";
+            titleScale = 2.2f * scaleMultiplier; // Увеличенный размер
         }
         else if (currentScreen == Screen::Singleplayer) {
             titleText = "SINGLEPLAYER";
@@ -667,10 +695,14 @@ void Menu::render() {
             titleScale = 2.0f * scaleMultiplier;
         }
 
+
         float titleWidth = textRenderer->getTextWidth(titleText, titleScale);
         float titleX = (static_cast<float>(Window::width) - titleWidth) / 2.0f;
         float titleY = static_cast<float>(Window::height) - 100.0f * scaleMultiplier;
-        textRenderer->renderText(*uiShader, titleText, titleX, titleY, titleScale, glm::vec3(1.0f, 1.0f, 1.0f));
+
+        // Если экран смерти, то красим заголовок в красный
+        glm::vec3 titleColor = (currentScreen == Screen::Respawn) ? glm::vec3(0.8f, 0.1f, 0.1f) : glm::vec3(1.0f, 1.0f, 1.0f);
+        textRenderer->renderText(*uiShader, titleText, titleX, titleY, titleScale, titleColor);
 
         if (currentScreen == Screen::Singleplayer) {
             float boxW = 500.0f * scaleMultiplier;
@@ -826,6 +858,7 @@ void Menu::render() {
         else if (currentScreen == Screen::Pause) activeButtons = &pauseButtons;
         else if (currentScreen == Screen::Settings) activeButtons = &settingsButtons;
         else if (currentScreen == Screen::ShaderSelect) activeButtons = &shaderSelectButtons;
+        else if (currentScreen == Screen::Respawn) activeButtons = &respawnButtons;
 
         if (activeButtons) {
             for (const auto& btn : *activeButtons) {

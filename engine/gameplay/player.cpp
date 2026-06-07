@@ -1,6 +1,10 @@
 #include "player.h"
+#include "menu.h" // <--- Подключаем заголовок меню
 #include <cmath>
 #include <algorithm>
+#include "../world/world_utils.h"
+
+extern Menu* g_MenuInstance; // <--- Объявляем внешнюю переменную указателя
 
 Player::Player(glm::vec3 startPosition) : camera(startPosition) {
     position = startPosition - glm::vec3(0.0f, 1.62f, 0.0f);
@@ -22,11 +26,71 @@ Player::Player(glm::vec3 startPosition) : camera(startPosition) {
     hotbar[1] = BLOCK_GRASS;
     hotbar[2] = BLOCK_STONE;
     hotbar[3] = BLOCK_GLASS;
-    hotbar[4] = BLOCK_OAK_LOG;     // Заняли пятый слот дубовым бревном
-    hotbar[5] = BLOCK_OAK_LEAVES;  // Добавили листья дуба в шестой слот
+    hotbar[4] = BLOCK_OAK_LOG;
+    hotbar[5] = BLOCK_OAK_LEAVES;
+
+    // Инициализация здоровья для режима выживания
+    health = 10;
+    maxHealth = 10;
+
+    // Первичная инициализация высоты и таймера регенерации
+    highestY = position.y;
+    regenTimer = 0.0f;
+
+    isDead = false;
+    deathTime = 0.0f;
 }
 
 void Player::update(float deltaTime, World& world) {
+    // 0. Если игрок мертв, плавно заваливаем камеру влево и блокируем управление
+    if (isDead) {
+        deathTime += deltaTime;
+        if (deathTime > 1.0f) {
+            deathTime = 1.0f;
+        }
+
+        // Плавный наклон на 45 градусов влево с easing (ease-out quadratic)
+        float t = deathTime;
+        float easeFactor = t * (2.0f - t);
+        camera.deathRollOffset = easeFactor * 45.0f;
+
+        // Если игрок умер в воздухе, позволяем ему плавно долететь до земли под действием гравитации
+        if (!isGrounded) {
+            velocity.y -= 9.81f * deltaTime;
+            if (velocity.y < -50.0f) {
+                velocity.y = -50.0f;
+            }
+
+            glm::vec3 displacement = velocity * deltaTime;
+            float distance = glm::length(displacement);
+            if (distance > 0.001f) {
+                float maxStep = 0.1f;
+                int steps = std::max(1, (int)std::ceil(distance / maxStep));
+                glm::vec3 stepDisplacement = displacement / (float)steps;
+                for (int i = 0; i < steps; ++i) {
+                    glm::vec3 oldPos = position;
+                    position.y += stepDisplacement.y;
+                    if (checkAABBCollision(position, world)) {
+                        isGrounded = true;
+                        velocity.y = 0.0f;
+                        position.y = oldPos.y;
+                        break;
+                    }
+                }
+            }
+        }
+        else {
+            velocity = glm::vec3(0.0f);
+        }
+
+        camera.position = position + glm::vec3(0.0f, eyeHeight, 0.0f);
+        camera.update(deltaTime);
+        return;
+    }
+
+    // Сохраняем предыдущее состояние приземления до начала физических шагов
+    bool wasGrounded = isGrounded;
+
     // 1. Определение намерения присесть
     bool shiftPressed = (glfwGetKey(Window::handle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
         glfwGetKey(Window::handle, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
@@ -120,6 +184,13 @@ void Player::update(float deltaTime, World& world) {
                 if (stepDisplacement.y != 0.0f) {
                     isGrounded = false;
                 }
+                else if (wasGrounded) {
+                    // Проверяем сход с уступа ТОЛЬКО если мы начали этот кадр твердо стоя на земле.
+                    // Это предотвращает ложный сброс приземления из-за отката шагов при падении.
+                    if (!checkAABBCollision(position + glm::vec3(0.0f, -0.01f, 0.0f), world)) {
+                        isGrounded = false;
+                    }
+                }
             }
         }
     }
@@ -134,8 +205,8 @@ void Player::update(float deltaTime, World& world) {
         }
     }
 
-    // 2. Плавный переход высоты камеры (теперь высота присяда выше)
-    float targetEyeHeight = isSneaking ? 1.45f : 1.62f; // Глаза опускаются на комфортные 0.17 блока
+    // 2. Плавный переход высоты камеры
+    float targetEyeHeight = isSneaking ? 1.45f : 1.62f;
     float transitionSpeed = 5.0f;
     if (eyeHeight < targetEyeHeight) {
         eyeHeight = std::min(targetEyeHeight, eyeHeight + transitionSpeed * deltaTime);
@@ -146,6 +217,78 @@ void Player::update(float deltaTime, World& world) {
 
     // 3. Синхронизируем положение рендеринга камеры с физическим телом
     camera.position = position + glm::vec3(0.0f, eyeHeight, 0.0f);
+
+    // 4. Логика урона от падения при приземлении
+    if (!wasGrounded && isGrounded) {
+        float fallDistance = highestY - position.y;
+        if (fallDistance >= 4.5f) {
+            float rawDamage = fallDistance * 0.625f;
+            int damage = static_cast<int>(std::floor(rawDamage));
+
+            if (damage > 0) {
+                health -= damage;
+                if (health < 0) {
+                    health = 0;
+                }
+
+                regenTimer = 0.0f;
+
+                // ЧЕК ПРИ ПАДЕНИИ: 
+                // Трясем камеру только если урон не смертельный.
+                // Если урон смертельный, отменяем тряску, чтобы освободить место для плавной анимации смерти.
+                if (health > 0) {
+                    camera.triggerShake(damage);
+                }
+                else {
+                    camera.shakeRollOffset = 0.0f;
+                    camera.shakeTimer = 0.0f;
+                    camera.initialShakeRoll = 0.0f;
+                }
+            }
+        }
+    }
+
+    // Обновляем наивысшую точку, достигнутую в полете
+    if (isGrounded) {
+        highestY = position.y;
+    }
+    else {
+        highestY = std::max(highestY, position.y);
+    }
+
+    // 5. Механика регенерации
+    if (health < maxHealth && health > 0) {
+        regenTimer += deltaTime;
+        if (regenTimer >= 5.0f) {
+            health++;
+            regenTimer = 0.0f;
+        }
+    }
+    else {
+        regenTimer = 0.0f;
+    }
+
+    // 6. Смерть и возрождение игрока
+    if (health <= 0) {
+        if (!isDead) {
+            isDead = true;
+            deathTime = 0.0f;
+            camera.shakeRollOffset = 0.0f;
+            camera.shakeTimer = 0.0f;
+            camera.initialShakeRoll = 0.0f;
+
+            // Разблокируем курсор для взаимодействия с кнопкой "Respawn"
+            glfwSetInputMode(Window::handle, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            Window::isCursorLocked = false;
+
+            // Вызываем экран меню возрождения
+            if (g_MenuInstance) {
+                g_MenuInstance->setScreen(Menu::Screen::Respawn);
+            }
+        }
+    }
+
+    camera.update(deltaTime);
 }
 
 void Player::handleKeyboard(float deltaTime) {

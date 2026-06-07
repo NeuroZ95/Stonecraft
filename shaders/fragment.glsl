@@ -11,6 +11,7 @@ uniform vec2 heightmapCenter;
 
 uniform float brightness;
 uniform int rtxEnabled;
+uniform float deathFactor; // Юниформ коэффициента смерти
 
 // Пределы итераций RTX
 uniform float rtxMaxDistance;
@@ -110,5 +111,17 @@ void main() {
     
     float lighting = ambient + diffuse * shadow;
     
-    FragColor = vec4(texColor.rgb * lighting * brightness, texColor.a);
+    vec3 finalColor = texColor.rgb * lighting * brightness;
+
+    // Плавное наложение эффектов при смерти
+    if (deathFactor > 0.0) {
+        // Добавляем красный оттенок (до 60% интенсивности)
+        vec3 deathRed = vec3(0.5, 0.0, 0.0);
+        finalColor = mix(finalColor, deathRed, deathFactor * 0.6);
+        
+        // Затемняем мир (до 40% ослабления исходной яркости)
+        finalColor *= (1.0 - deathFactor * 0.4);
+    }
+    
+    FragColor = vec4(finalColor, texColor.a);
 }

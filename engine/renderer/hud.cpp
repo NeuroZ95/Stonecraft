@@ -5,12 +5,13 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 
-Hud::Hud() : hudShader(nullptr), slotDeactTex(nullptr), slotActTex(nullptr), quadVAO(0), quadVBO(0) {}
+Hud::Hud() : hudShader(nullptr), slotDeactTex(nullptr), slotActTex(nullptr), heartTex(nullptr), quadVAO(0), quadVBO(0) {}
 
 Hud::~Hud() {
     delete hudShader;
     delete slotDeactTex;
     delete slotActTex;
+    delete heartTex;
     if (quadVAO != 0) glDeleteVertexArrays(1, &quadVAO);
     if (quadVBO != 0) glDeleteBuffers(1, &quadVBO);
 }
@@ -19,6 +20,7 @@ bool Hud::init() {
     hudShader = new Shader("shaders/ui_vertex.glsl", "shaders/ui_fragment.glsl");
     slotDeactTex = new Texture("textures/hud/slot_deact.png");
     slotActTex = new Texture("textures/hud/slot_act.png");
+    heartTex = new Texture("textures/hud/heart.png"); // Загрузка текстуры сердца
 
     float vertices[] = {
         0.0f, 1.0f, 0.0f, 1.0f,
@@ -97,6 +99,28 @@ void Hud::render(const Player& player, const Texture& blockAtlas, float screenWi
         drawQuad(x, y, itemSize, itemSize, glm::vec4(1.0f), blockAtlas.getID(), texCoords);
     }
 
+    // 3. Отрисовка сердец режима выживания над хотбаром
+    // Текстура сердца имеет размер 9x9 пикселей.
+    // С учетом адаптивного масштаба интерфейса guiScale:
+    // Ширина и высота одного сердца составят 9.0f * guiScale.
+    // Наложение соседних сердец друг на друга на 1 пиксель означает, что шаг смещения между ними равен 8.0f * guiScale.
+    float heartWidth = 9.f * 0.75 * guiScale;
+    float heartHeight = 9.f * 0.75 * guiScale;
+    float heartStep = 8.f * 0.75 * guiScale; // Смещение на 8 пикселей (перекрытие в 1 пиксель)
+
+    // Размещаем на высоте 2 пикселей над хотбаром
+    float heartY = startY + slotSize + (2.0f * guiScale);
+
+    for (int i = 0; i < player.maxHealth; ++i) {
+        float hx = startX + i * heartStep;
+
+        // Если текущее здоровье меньше или равно индексу, рисуем сердце темным (потерянное здоровье)
+        glm::vec4 color = (i < player.health) ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f) : glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+        // Передаем текстурные координаты с инвертированной осью Y, чтобы компенсировать вертикальный переворот stb_image
+        drawQuad(hx, heartY, heartWidth, heartHeight, color, heartTex->getID(), glm::vec4(0.0f, 1.0f, 1.0f, 0.0f));
+    }
+
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -104,6 +128,9 @@ void Hud::render(const Player& player, const Texture& blockAtlas, float screenWi
 
 void Hud::drawQuad(float x, float y, float width, float height, glm::vec4 color, GLuint textureID, glm::vec4 texCoords) {
     glUniform1i(glGetUniformLocation(hudShader->ID, "isText"), 0);
+
+    // Всегда передаем цвет в шейдер для смешивания (tint)
+    glUniform4f(glGetUniformLocation(hudShader->ID, "solidColor"), color.r, color.g, color.b, color.a);
 
     if (textureID != 0) {
         glUniform1i(glGetUniformLocation(hudShader->ID, "isTexture"), 1);
@@ -113,7 +140,6 @@ void Hud::drawQuad(float x, float y, float width, float height, glm::vec4 color,
     }
     else {
         glUniform1i(glGetUniformLocation(hudShader->ID, "isTexture"), 0);
-        glUniform4f(glGetUniformLocation(hudShader->ID, "solidColor"), color.r, color.g, color.b, color.a);
     }
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));

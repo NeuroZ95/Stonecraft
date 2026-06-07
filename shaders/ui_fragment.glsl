@@ -13,7 +13,8 @@ void main() {
         vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, TexCoords).r);
         color = vec4(textColor, 1.0) * sampled;
     } else if (isTexture) {
-        color = texture(text, TexCoords);
+        // Умножаем цвет текстуры на solidColor для возможности тонирования элементов UI
+        color = texture(text, TexCoords) * solidColor;
         if (color.a < 0.05) {
             discard;
         }

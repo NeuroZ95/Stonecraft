@@ -7,9 +7,9 @@
 struct Settings {
     int renderDistance = 12;
     float brightness = 1.0f;
-    float fov = 70.0f;
-    bool rtxEnabled = false;
-    int rtxQuality = 1; // 0: Low, 1: Medium, 2: High, 3: Ultra
+    float fov = 110.0f;
+    bool rtxEnabled = true;
+    int rtxQuality = 3; // 0: Low, 1: Medium, 2: High, 3: Ultra
     std::string selectedShader = "default";
 
     inline void load() {

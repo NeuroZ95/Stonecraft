@@ -41,12 +41,13 @@ class Menu {
 public:
     enum class Screen {
         Main,
-        Singleplayer,  // Экран со списком сохранений
-        CreateWorld,   // Экран создания нового мира (ввод сида)
+        Singleplayer,  
+        CreateWorld,   
         Multiplayer,
         Pause,
-        Settings,      // Экран настроек
-        ShaderSelect,  // Экран выбора шейдеров
+        Settings,      
+        ShaderSelect,  
+        Respawn,       // Экран смерти / возрождения
         None
     };
 
@@ -119,7 +120,8 @@ private:
     std::vector<Button> multiplayerButtons;
     std::vector<Button> pauseButtons;
     std::vector<Button> settingsButtons;      // Кнопки настроек
-    std::vector<Button> shaderSelectButtons;  // Кнопки выбора шейдеров
+    std::vector<Button> shaderSelectButtons;  
+    std::vector<Button> respawnButtons;       // Кнопки экрана возрождения
 
     bool isFlatWorldSelected = false; // Состояние кнопки выбора типа мира
     std::string seedInputText;

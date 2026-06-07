@@ -90,6 +90,7 @@
 │   │   ├── oak_log.png
 │   │   └── stone.png
 │   ├── hud
+│   │   ├── heart.png
 │   │   ├── slot_act.png
 │   │   └── slot_deact.png
 │   ├── template_multi.png
@@ -264,6 +265,8 @@ int main() {
 }
 --- FILE: .\engine\gameplay\camera.cpp ---
 #include "camera.h"
+#include <cmath>
+#include <cstdlib>
 
 Camera::Camera(glm::vec3 startPosition) {
     position = startPosition;
@@ -271,11 +274,39 @@ Camera::Camera(glm::vec3 startPosition) {
     yaw = -90.0f;
     pitch = 0.0f;
     front = glm::vec3(0.0f, 0.0f, -1.0f);
+
+    // Инициализируем переменные крена камеры нулевыми значениями
+    shakeRollOffset = 0.0f;
+    shakeTimer = 0.0f;
+    initialShakeRoll = 0.0f;
+
     updateVectors();
 }
 
-glm::mat4 Camera::getViewMatrix() {
-    return glm::lookAt(position, position + front, up);
+glm::mat4 Camera::getViewMatrix(bool relativeToZero) {
+    // 1. Вычисляем стандартные векторы направления на основе Yaw и Pitch
+    glm::vec3 tempFront;
+    tempFront.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    tempFront.y = sin(glm::radians(pitch));
+    tempFront.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    tempFront = glm::normalize(tempFront);
+
+    glm::vec3 tempRight = glm::normalize(glm::cross(tempFront, worldUp));
+    glm::vec3 tempUp = glm::normalize(glm::cross(tempRight, tempFront));
+
+    // 2. Если крен (Roll) активен, поворачиваем вектор "Up" вокруг оси взгляда (tempFront)
+    if (std::abs(shakeRollOffset) > 0.001f) {
+        // Создаем матрицу вращения на угол shakeRollOffset вокруг вектора tempFront
+        glm::mat4 rollRotation = glm::rotate(glm::mat4(1.0f), glm::radians(shakeRollOffset), tempFront);
+        // Применяем вращение к вектору tempUp
+        tempUp = glm::vec3(rollRotation * glm::vec4(tempUp, 0.0f));
+    }
+
+    // Выбираем позицию: (0,0,0) для относительного рендеринга или реальные координаты
+    glm::vec3 eyePos = relativeToZero ? glm::vec3(0.0f) : position;
+
+    // Возвращаем готовую матрицу вида с креном по 3-й оси
+    return glm::lookAt(eyePos, eyePos + tempFront, tempUp);
 }
 
 void Camera::updateVectors() {
@@ -287,6 +318,44 @@ void Camera::updateVectors() {
 
     right = glm::normalize(glm::cross(front, worldUp));
     up = glm::normalize(glm::cross(right, front));
+}
+
+void Camera::update(float deltaTime) {
+    // Если таймер тряски активен, плавно уменьшаем крен
+    if (shakeTimer > 0.0f) {
+        shakeTimer -= deltaTime;
+        if (shakeTimer < 0.0f) {
+            shakeTimer = 0.0f;
+        }
+
+        // Коэффициент линейного затухания (от 1.0 до 0.0 за полсекунды)
+        float progress = shakeTimer / 0.5f;
+        shakeRollOffset = initialShakeRoll * progress;
+    }
+    else {
+        // Гарантируем полное выравнивание камеры после окончания таймера
+        shakeRollOffset = 0.0f;
+    }
+}
+
+void Camera::triggerShake(int damage) {
+    // 1. Рассчитываем величину наклона в градусах
+    float magnitude = 10.0f; // Базовый наклон на 10 градусов для 1 сердца урона
+
+    if (damage >= 7) {
+        magnitude = 45.0f; // При уроне больше 7 сердец наклон составит 45 градусов
+    }
+    else if (damage > 1) {
+        // Линейная интерполяция угла наклона между 10 и 45 градусами
+        float interpolationFactor = static_cast<float>(damage - 1) / 6.0f;
+        magnitude = 10.0f + interpolationFactor * 35.0f;
+    }
+
+    initialShakeRoll = -magnitude;
+
+    // Резко устанавливаем начальный наклон и запускаем полусекундный таймер плавного возврата
+    shakeRollOffset = initialShakeRoll;
+    shakeTimer = 0.5f;
 }
 --- FILE: .\engine\gameplay\camera.h ---
 #pragma once
@@ -304,10 +373,22 @@ public:
     float yaw;
     float pitch;
 
+    // --- МОДУЛЬ ТРЯСКИ КАМЕРЫ (КРЕН / ROLL ПО 3-Й ОСИ) ---
+    float shakeRollOffset;     // Текущий угол наклона камеры влево/вправо (в градусах)
+    float shakeTimer;          // Оставшееся время возврата в секундах (затухает от 0.5 до 0)
+    float initialShakeRoll;    // Начальный резкий наклон (+/- градусов в случайную сторону)
+
     Camera(glm::vec3 startPosition);
-    
-    glm::mat4 getViewMatrix();
+
+    // Получение матрицы вида (relativeToZero используется для устранения дрожания при рендеринге)
+    glm::mat4 getViewMatrix(bool relativeToZero = false);
     void updateVectors();
+
+    // Метод плавного линейного возвращения крена камеры в исходное состояние
+    void update(float deltaTime);
+
+    // Метод резкого наклона камеры при получении урона
+    void triggerShake(int damage);
 };
 --- FILE: .\engine\gameplay\game.cpp ---
 #include "game.h"
@@ -548,6 +629,7 @@ bool Game::init() {
     blockFiles[BLOCK_STONE] = "stone.png";
     blockFiles[BLOCK_GLASS] = "glass.png";
     blockFiles[BLOCK_OAK_LOG] = "oak_log.png";
+    blockFiles[BLOCK_OAK_LEAVES] = "oak_leaves.png"; // Регистрируем текстуру для листьев дуба
 
     blockAtlas = new Texture("textures/blocks", blockFiles);
 
@@ -710,7 +792,10 @@ void Game::update(float deltaTime) {
                             player.selectedSlot = savedSlot;
                             for (int i = 0; i < 9; ++i) player.hotbar[i] = savedHotbar[i];
                             player.velocity = glm::vec3(0.0f);
-                            player.isGrounded = false;
+                            player.isGrounded = true;              // Игрок твердо стоит на земле при загрузке
+                            player.highestY = player.position.y;   // Сбрасываем пиковую высоту падения
+                            player.health = player.maxHealth;      // Полностью восстанавливаем здоровье при входе
+                            player.regenTimer = 0.0f;              // Сбрасываем таймер регенерации
                         }
                         else {
                             Logger::log(Logger::Level::WARNING, "World save details not found. Creating default...");
@@ -949,7 +1034,8 @@ void Game::render(float deltaTime) {
         glUniform3fv(glGetUniformLocation(ourShader->ID, "cameraPos"), 1, glm::value_ptr(player.camera.position));
 
         glm::mat4 model = glm::mat4(1.0f);
-        glm::mat4 view = glm::lookAt(glm::vec3(0.0f), player.camera.front, player.camera.up);
+        // Запрашиваем матрицу вида с эффектом тряски в относительных координатах
+        glm::mat4 view = player.camera.getViewMatrix(true);
         glm::mat4 projection = glm::perspective(glm::radians(g_Settings.fov), static_cast<float>(Window::width) / static_cast<float>(Window::height), 0.01f, 200.0f);
 
         unsigned int modelLoc = glGetUniformLocation(ourShader->ID, "model");
@@ -2491,6 +2577,7 @@ private:
 #include "player.h"
 #include <cmath>
 #include <algorithm>
+#include "../world/world_utils.h"
 
 Player::Player(glm::vec3 startPosition) : camera(startPosition) {
     position = startPosition - glm::vec3(0.0f, 1.62f, 0.0f);
@@ -2512,10 +2599,22 @@ Player::Player(glm::vec3 startPosition) : camera(startPosition) {
     hotbar[1] = BLOCK_GRASS;
     hotbar[2] = BLOCK_STONE;
     hotbar[3] = BLOCK_GLASS;
-    hotbar[4] = BLOCK_OAK_LOG; // Заняли пятый слот дубовым бревном
+    hotbar[4] = BLOCK_OAK_LOG;     // Заняли пятый слот дубовым бревном
+    hotbar[5] = BLOCK_OAK_LEAVES;  // Добавили листья дуба в шестой слот
+
+    // Инициализация здоровья для режима выживания
+    health = 10;
+    maxHealth = 10;
+
+    // Первичная инициализация высоты и таймера регенерации
+    highestY = position.y;
+    regenTimer = 0.0f;
 }
 
 void Player::update(float deltaTime, World& world) {
+    // Сохраняем предыдущее состояние приземления до начала физических шагов
+    bool wasGrounded = isGrounded;
+
     // 1. Определение намерения присесть
     bool shiftPressed = (glfwGetKey(Window::handle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
         glfwGetKey(Window::handle, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
@@ -2635,6 +2734,62 @@ void Player::update(float deltaTime, World& world) {
 
     // 3. Синхронизируем положение рендеринга камеры с физическим телом
     camera.position = position + glm::vec3(0.0f, eyeHeight, 0.0f);
+
+    // 4. Логика урона от падения при приземлении
+    if (!wasGrounded && isGrounded) {
+        float fallDistance = highestY - position.y;
+        // Урон от падения работает только на высоте 4.5 блоков и выше
+        if (fallDistance >= 4.5f) {
+            float rawDamage = fallDistance * 0.625f;
+            // Округляем урон вниз, чтобы у игрока осталось больше HP
+            int damage = static_cast<int>(std::floor(rawDamage));
+
+            if (damage > 0) {
+                health -= damage;
+                if (health < 0) {
+                    health = 0;
+                }
+
+                // Сбрасываем таймер регенерации при получении любого урона
+                regenTimer = 0.0f;
+
+                // Запускаем эффект тряски камеры, зависящий от силы удара
+                camera.triggerShake(damage);
+            }
+        }
+    }
+
+    // Обновляем наивысшую точку, достигнутую в полете
+    if (isGrounded) {
+        highestY = position.y;
+    }
+    else {
+        highestY = std::max(highestY, position.y);
+    }
+
+    // 5. Механика регенерации (восстанавливаем 1 сердце каждые 5 секунд)
+    if (health < maxHealth && health > 0) {
+        regenTimer += deltaTime;
+        if (regenTimer >= 5.0f) {
+            health++;
+            regenTimer = 0.0f; // Сбрасываем таймер после успешного исцеления
+        }
+    }
+    else {
+        // Если здоровье полно или игрок погиб, сбрасываем таймер в 0
+        regenTimer = 0.0f;
+    }
+
+    // 6. Смерть и возрождение игрока
+    if (health <= 0) {
+        WorldUtils::resetPlayerToSpawn(*this, world);
+        health = maxHealth;
+        highestY = position.y; // Сбрасываем высоту, чтобы избежать повторного урона при спавне
+        regenTimer = 0.0f;
+    }
+
+    // 7. Обновляем состояние камеры (включая постепенное возвращение из тряски)
+    camera.update(deltaTime);
 }
 
 void Player::handleKeyboard(float deltaTime) {
@@ -2809,6 +2964,14 @@ public:
     block_t hotbar[HOTBAR_SIZE];
     int selectedSlot;
 
+    // Параметры здоровья игрока
+    int health;
+    int maxHealth;
+
+    // Дополнительные параметры механик здоровья
+    float highestY;     // Максимальная высота полета/падения (для расчета урона)
+    float regenTimer;   // Таймер восстановления здоровья
+
     Player(glm::vec3 startPosition);
 
     void update(float deltaTime, World& world);
@@ -2828,9 +2991,9 @@ public:
 struct Settings {
     int renderDistance = 12;
     float brightness = 1.0f;
-    float fov = 70.0f;
-    bool rtxEnabled = false;
-    int rtxQuality = 1; // 0: Low, 1: Medium, 2: High, 3: Ultra
+    float fov = 110.0f;
+    bool rtxEnabled = true;
+    int rtxQuality = 3; // 0: Low, 1: Medium, 2: High, 3: Ultra
     std::string selectedShader = "default";
 
     inline void load() {
@@ -3981,7 +4144,7 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
         return blocks;
     }
 
-    // Default World (с холмами, биомами и спавном деревьев)
+    // Pass 1: Генерация базового рельефа чанка
     for (int x = 0; x < 16; ++x) {
         for (int z = 0; z < 16; ++z) {
             int worldX = cx * 16 + x;
@@ -4001,7 +4164,6 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
             if (surfaceHeight < 5) surfaceHeight = 5;
             if (surfaceHeight >= 64) surfaceHeight = 64 - 1;
 
-            // Генерация базового рельефа
             for (int y = 0; y < 64; ++y) {
                 block_t blockType = 0;
 
@@ -4026,42 +4188,117 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
 
                 blocks[(x * 64 + y) * 16 + z] = blockType;
             }
+        }
+    }
 
-            // Биомы и спавн дубовых брёвен
-            float biomeVal = noise.noise(worldX * 0.005f, worldZ * 0.005f);
+    // Pass 2: Упреждающий спавн деревьев
+    int worldStartX = cx * 16;
+    int worldStartZ = cz * 16;
+
+    for (int wx = worldStartX - 3; wx < worldStartX + 16 + 3; ++wx) {
+        for (int wz = worldStartZ - 3; wz < worldStartZ + 16 + 3; ++wz) {
+            float biomeVal = noise.noise(wx * 0.005f, wz * 0.005f);
             float spawnProb = 0.0f;
 
             if (biomeVal < -0.4f) {
-                spawnProb = 0.0f; // Степь (деревьев нет)
+                spawnProb = 0.0f;
             }
             else if (biomeVal < 0.0f) {
-                spawnProb = 0.002f; // Поляны (сверхнизкая плотность)
+                spawnProb = 0.002f;
             }
             else if (biomeVal < 0.4f) {
-                spawnProb = 0.012f; // Степь, окруженная огромными лесами (редкие деревья)
+                spawnProb = 0.012f;
             }
             else {
-                spawnProb = 0.055f; // Леса (высокая плотность)
+                spawnProb = 0.055f;
             }
 
             if (spawnProb > 0.0f) {
-                unsigned int hashVal = seed ^ (worldX * 73856093) ^ (worldZ * 19349663);
+                unsigned int hashVal = seed ^ (wx * 73856093) ^ (wz * 19349663);
                 hashVal = (hashVal ^ 61) ^ (hashVal >> 16);
                 hashVal *= 9;
                 hashVal = hashVal ^ (hashVal >> 11);
                 float randVal = static_cast<float>(hashVal & 0xFFFF) / 65535.0f;
 
                 if (randVal < spawnProb) {
-                    if (blocks[(x * 64 + surfaceHeight) * 16 + z] == 2) { // BLOCK_GRASS
-                        unsigned int heightHash = hashVal ^ 38241243;
-                        int treeHeight = 4 + (heightHash % 3); // Высота 4-6 блоков
+                    float continentalness = noise.noise(wx * 0.003f, wz * 0.003f);
+                    float hills = noise.noise(wx * 0.015f, wz * 0.015f);
+                    float detail = noise.noise(wx * 0.06f, wz * 0.06f);
 
-                        blocks[(x * 64 + surfaceHeight) * 16 + z] = 1; // Превращаем траву под деревом в землю
+                    float baseHeight = 32.0f;
+                    float mountainShape = continentalness * 16.0f;
+                    float hillShape = hills * 6.0f;
+                    float detailShape = detail * 1.5f;
 
+                    int surfaceHeight = static_cast<int>(baseHeight + mountainShape + hillShape + detailShape);
+                    if (surfaceHeight < 5) surfaceHeight = 5;
+                    if (surfaceHeight >= 64) surfaceHeight = 63;
+
+                    unsigned int heightHash = hashVal ^ 38241243;
+                    int treeHeight = 4 + (heightHash % 3);
+
+                    // Если ствол находится внутри границ текущего чанка
+                    if (wx >= worldStartX && wx < worldStartX + 16 &&
+                        wz >= worldStartZ && wz < worldStartZ + 16) {
+                        int localX = wx - worldStartX;
+                        int localZ = wz - worldStartZ;
+
+                        blocks[(localX * 64 + surfaceHeight) * 16 + localZ] = 1; // Превращаем траву в землю
                         for (int th = 1; th <= treeHeight; ++th) {
                             int ly = surfaceHeight + th;
                             if (ly < 64) {
-                                blocks[(x * 64 + ly) * 16 + z] = 5; // BLOCK_OAK_LOG
+                                blocks[(localX * 64 + ly) * 16 + localZ] = 5; // BLOCK_OAK_LOG
+                            }
+                        }
+                    }
+
+                    // Накладываем крону листьев по шаблону
+                    int topY = surfaceHeight + treeHeight;
+                    for (int ly = topY - 2; ly <= topY + 1; ++ly) {
+                        if (ly >= 64) continue;
+                        int relativeY = ly - topY;
+                        int radius = 2;
+
+                        if (relativeY == 1) {
+                            radius = 1;
+                        }
+                        else if (relativeY == 0) {
+                            radius = 2;
+                        }
+                        else if (relativeY == -1) {
+                            radius = 3;
+                        }
+                        else if (relativeY == -2) {
+                            radius = 2;
+                        }
+
+                        for (int ldx = -radius; ldx <= radius; ++ldx) {
+                            for (int ldz = -radius; ldz <= radius; ++ldz) {
+                                if (radius == 1) {
+                                    if (std::abs(ldx) == 1 && std::abs(ldz) == 1) continue;
+                                }
+                                else if (radius == 2) {
+                                    if (std::abs(ldx) == 2 && std::abs(ldz) == 2) continue;
+                                }
+                                else if (radius == 3) {
+                                    if (std::abs(ldx) == 3 && std::abs(ldz) == 3) continue;
+                                    if (std::abs(ldx) + std::abs(ldz) >= 5) continue;
+                                }
+
+                                int leafWorldX = wx + ldx;
+                                int leafWorldZ = wz + ldz;
+
+                                if (leafWorldX >= worldStartX && leafWorldX < worldStartX + 16 &&
+                                    leafWorldZ >= worldStartZ && leafWorldZ < worldStartZ + 16) {
+                                    int localLX = leafWorldX - worldStartX;
+                                    int localLZ = leafWorldZ - worldStartZ;
+
+                                    size_t idx = (localLX * 64 + ly) * 16 + localLZ;
+                                    block_t current = blocks[idx];
+                                    if (current == 0 || current == 6) { // BLOCK_AIR или BLOCK_OAK_LEAVES
+                                        blocks[idx] = 6; // BLOCK_OAK_LEAVES
+                                    }
+                                }
                             }
                         }
                     }
@@ -4567,12 +4804,13 @@ public:
 #include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 
-Hud::Hud() : hudShader(nullptr), slotDeactTex(nullptr), slotActTex(nullptr), quadVAO(0), quadVBO(0) {}
+Hud::Hud() : hudShader(nullptr), slotDeactTex(nullptr), slotActTex(nullptr), heartTex(nullptr), quadVAO(0), quadVBO(0) {}
 
 Hud::~Hud() {
     delete hudShader;
     delete slotDeactTex;
     delete slotActTex;
+    delete heartTex;
     if (quadVAO != 0) glDeleteVertexArrays(1, &quadVAO);
     if (quadVBO != 0) glDeleteBuffers(1, &quadVBO);
 }
@@ -4581,6 +4819,7 @@ bool Hud::init() {
     hudShader = new Shader("shaders/ui_vertex.glsl", "shaders/ui_fragment.glsl");
     slotDeactTex = new Texture("textures/hud/slot_deact.png");
     slotActTex = new Texture("textures/hud/slot_act.png");
+    heartTex = new Texture("textures/hud/heart.png"); // Загрузка текстуры сердца
 
     float vertices[] = {
         0.0f, 1.0f, 0.0f, 1.0f,
@@ -4659,6 +4898,28 @@ void Hud::render(const Player& player, const Texture& blockAtlas, float screenWi
         drawQuad(x, y, itemSize, itemSize, glm::vec4(1.0f), blockAtlas.getID(), texCoords);
     }
 
+    // 3. Отрисовка сердец режима выживания над хотбаром
+    // Текстура сердца имеет размер 9x9 пикселей.
+    // С учетом адаптивного масштаба интерфейса guiScale:
+    // Ширина и высота одного сердца составят 9.0f * guiScale.
+    // Наложение соседних сердец друг на друга на 1 пиксель означает, что шаг смещения между ними равен 8.0f * guiScale.
+    float heartWidth = 9.f * 0.75 * guiScale;
+    float heartHeight = 9.f * 0.75 * guiScale;
+    float heartStep = 8.f * 0.75 * guiScale; // Смещение на 8 пикселей (перекрытие в 1 пиксель)
+
+    // Размещаем на высоте 2 пикселей над хотбаром
+    float heartY = startY + slotSize + (2.0f * guiScale);
+
+    for (int i = 0; i < player.maxHealth; ++i) {
+        float hx = startX + i * heartStep;
+
+        // Если текущее здоровье меньше или равно индексу, рисуем сердце темным (потерянное здоровье)
+        glm::vec4 color = (i < player.health) ? glm::vec4(1.0f, 1.0f, 1.0f, 1.0f) : glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+        // Передаем текстурные координаты с инвертированной осью Y, чтобы компенсировать вертикальный переворот stb_image
+        drawQuad(hx, heartY, heartWidth, heartHeight, color, heartTex->getID(), glm::vec4(0.0f, 1.0f, 1.0f, 0.0f));
+    }
+
     glDisable(GL_BLEND);
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
@@ -4666,6 +4927,9 @@ void Hud::render(const Player& player, const Texture& blockAtlas, float screenWi
 
 void Hud::drawQuad(float x, float y, float width, float height, glm::vec4 color, GLuint textureID, glm::vec4 texCoords) {
     glUniform1i(glGetUniformLocation(hudShader->ID, "isText"), 0);
+
+    // Всегда передаем цвет в шейдер для смешивания (tint)
+    glUniform4f(glGetUniformLocation(hudShader->ID, "solidColor"), color.r, color.g, color.b, color.a);
 
     if (textureID != 0) {
         glUniform1i(glGetUniformLocation(hudShader->ID, "isTexture"), 1);
@@ -4675,7 +4939,6 @@ void Hud::drawQuad(float x, float y, float width, float height, glm::vec4 color,
     }
     else {
         glUniform1i(glGetUniformLocation(hudShader->ID, "isTexture"), 0);
-        glUniform4f(glGetUniformLocation(hudShader->ID, "solidColor"), color.r, color.g, color.b, color.a);
     }
 
     glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, 0.0f));
@@ -4720,6 +4983,7 @@ private:
     Shader* hudShader;
     Texture* slotDeactTex;
     Texture* slotActTex;
+    Texture* heartTex; // Текстура сердца
     unsigned int quadVAO, quadVBO;
 
     void drawQuad(float x, float y, float width, float height, glm::vec4 color, GLuint textureID, glm::vec4 texCoords = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
@@ -5324,6 +5588,7 @@ public:
 
 #endif
 --- FILE: .\engine\world\chunk.cpp ---
+// --- FILE: .\engine\world\chunk.cpp ---
 #include "chunk.h"
 #include <GL/glew.h>
 #include <cmath>
@@ -5367,7 +5632,7 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
         return;
     }
 
-    // Default World (с холмами, биомами и деревьями)
+    // Pass 1: Генерация базового рельефа чанка
     for (int x = 0; x < CHUNK_SIZE; ++x) {
         for (int z = 0; z < CHUNK_SIZE; ++z) {
             int worldX = chunkX * CHUNK_SIZE + x;
@@ -5387,7 +5652,6 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
             if (surfaceHeight < 5) surfaceHeight = 5;
             if (surfaceHeight >= CHUNK_HEIGHT) surfaceHeight = CHUNK_HEIGHT - 1;
 
-            // Заполнение слоёв ландшафта
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 block_t blockType = BLOCK_AIR;
 
@@ -5412,45 +5676,118 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
 
                 setBlock(x, y, z, blockType);
             }
+        }
+    }
 
-            // Определение биома и спавн дубовых брёвен
-            float biomeVal = noise.noise(worldX * 0.005f, worldZ * 0.005f);
+    // Pass 2: Упреждающий спавн деревьев (сканируем также и соседние границы в радиусе 3 блоков)
+    int worldStartX = chunkX * CHUNK_SIZE;
+    int worldStartZ = chunkZ * CHUNK_SIZE;
+
+    for (int wx = worldStartX - 3; wx < worldStartX + CHUNK_SIZE + 3; ++wx) {
+        for (int wz = worldStartZ - 3; wz < worldStartZ + CHUNK_SIZE + 3; ++wz) {
+            float biomeVal = noise.noise(wx * 0.005f, wz * 0.005f);
             float spawnProb = 0.0f;
 
             if (biomeVal < -0.4f) {
-                spawnProb = 0.0f; // Степь (деревьев нет)
+                spawnProb = 0.0f;
             }
             else if (biomeVal < 0.0f) {
-                spawnProb = 0.002f; // Поляны (сверхнизкая плотность)
+                spawnProb = 0.002f;
             }
             else if (biomeVal < 0.4f) {
-                spawnProb = 0.012f; // Степь, окруженная огромными лесами (редкие деревья)
+                spawnProb = 0.012f;
             }
             else {
-                spawnProb = 0.055f; // Леса (высокая плотность)
+                spawnProb = 0.055f;
             }
 
             if (spawnProb > 0.0f) {
-                // Детерминированный хэш на основе координат и сида мира
-                unsigned int hashVal = seed ^ (worldX * 73856093) ^ (worldZ * 19349663);
+                unsigned int hashVal = seed ^ (wx * 73856093) ^ (wz * 19349663);
                 hashVal = (hashVal ^ 61) ^ (hashVal >> 16);
                 hashVal *= 9;
                 hashVal = hashVal ^ (hashVal >> 11);
                 float randVal = static_cast<float>(hashVal & 0xFFFF) / 65535.0f;
 
                 if (randVal < spawnProb) {
-                    if (getBlock(x, surfaceHeight, z) == BLOCK_GRASS) {
-                        unsigned int heightHash = hashVal ^ 38241243;
-                        int treeHeight = 4 + (heightHash % 3); // Выдает высоту от 4 до 6
+                    // Рассчитываем высоту поверхности для данной координаты (wx, wz)
+                    float continentalness = noise.noise(wx * 0.003f, wz * 0.003f);
+                    float hills = noise.noise(wx * 0.015f, wz * 0.015f);
+                    float detail = noise.noise(wx * 0.06f, wz * 0.06f);
 
-                        // Превращаем траву под деревом в землю
-                        setBlock(x, surfaceHeight, z, BLOCK_DIRT);
+                    float baseHeight = 32.0f;
+                    float mountainShape = continentalness * 16.0f;
+                    float hillShape = hills * 6.0f;
+                    float detailShape = detail * 1.5f;
 
-                        // Выращиваем ствол из дубовых брёвен
+                    int surfaceHeight = static_cast<int>(baseHeight + mountainShape + hillShape + detailShape);
+                    if (surfaceHeight < 5) surfaceHeight = 5;
+                    if (surfaceHeight >= CHUNK_HEIGHT) surfaceHeight = CHUNK_HEIGHT - 1;
+
+                    unsigned int heightHash = hashVal ^ 38241243;
+                    int treeHeight = 4 + (heightHash % 3);
+
+                    // Если ствол дерева находится внутри нашего чанка, строим его
+                    if (wx >= worldStartX && wx < worldStartX + CHUNK_SIZE &&
+                        wz >= worldStartZ && wz < worldStartZ + CHUNK_SIZE) {
+                        int localX = wx - worldStartX;
+                        int localZ = wz - worldStartZ;
+
+                        setBlock(localX, surfaceHeight, localZ, BLOCK_DIRT);
                         for (int th = 1; th <= treeHeight; ++th) {
                             int ly = surfaceHeight + th;
                             if (ly < CHUNK_HEIGHT) {
-                                setBlock(x, ly, z, BLOCK_OAK_LOG);
+                                setBlock(localX, ly, localZ, BLOCK_OAK_LOG);
+                            }
+                        }
+                    }
+
+                    // Рассчитываем и накладываем крону листьев (даже если само дерево за границей чанка)
+                    int topY = surfaceHeight + treeHeight;
+                    for (int ly = topY - 2; ly <= topY + 1; ++ly) {
+                        if (ly >= CHUNK_HEIGHT) continue;
+                        int relativeY = ly - topY;
+                        int radius = 2;
+
+                        if (relativeY == 1) {
+                            radius = 1; // 1 блок над верхним бревном
+                        }
+                        else if (relativeY == 0) {
+                            radius = 2;
+                        }
+                        else if (relativeY == -1) {
+                            radius = 3; // Максимальный радиус в 3 блока
+                        }
+                        else if (relativeY == -2) {
+                            radius = 2;
+                        }
+
+                        for (int ldx = -radius; ldx <= radius; ++ldx) {
+                            for (int ldz = -radius; ldz <= radius; ++ldz) {
+                                if (radius == 1) {
+                                    if (std::abs(ldx) == 1 && std::abs(ldz) == 1) continue;
+                                }
+                                else if (radius == 2) {
+                                    if (std::abs(ldx) == 2 && std::abs(ldz) == 2) continue;
+                                }
+                                else if (radius == 3) {
+                                    if (std::abs(ldx) == 3 && std::abs(ldz) == 3) continue;
+                                    if (std::abs(ldx) + std::abs(ldz) >= 5) continue;
+                                }
+
+                                int leafWorldX = wx + ldx;
+                                int leafWorldZ = wz + ldz;
+
+                                // Размещаем листья только в том случае, если они попадают в границы текущего чанка
+                                if (leafWorldX >= worldStartX && leafWorldX < worldStartX + CHUNK_SIZE &&
+                                    leafWorldZ >= worldStartZ && leafWorldZ < worldStartZ + CHUNK_SIZE) {
+                                    int localLX = leafWorldX - worldStartX;
+                                    int localLZ = leafWorldZ - worldStartZ;
+
+                                    block_t current = getBlock(localLX, ly, localLZ);
+                                    if (current == BLOCK_AIR || current == BLOCK_OAK_LEAVES) {
+                                        setBlock(localLX, ly, localLZ, BLOCK_OAK_LEAVES);
+                                    }
+                                }
                             }
                         }
                     }
@@ -5519,13 +5856,15 @@ void Chunk::buildMesh(int totalBlocksInAtlas) {
                     }
                     else {
                         block_t neighborType = getBlock(nx, ny, nz);
-                        if (blockType == BLOCK_GLASS) {
-                            // Для стекла: грань рендерится только на границе с воздухом
-                            showFace = (neighborType == BLOCK_AIR);
+                        if (blockType == BLOCK_OAK_LEAVES) {
+                            // Листья рендерят свои грани перед воздухом, стеклом и другими листьями
+                            showFace = (neighborType == BLOCK_AIR || neighborType == BLOCK_GLASS || neighborType == BLOCK_OAK_LEAVES);
+                        }
+                        else if (blockType == BLOCK_GLASS) {
+                            showFace = (neighborType == BLOCK_AIR || (isBlockTransparent(neighborType) && neighborType != BLOCK_GLASS));
                         }
                         else {
-                            // Для непрозрачных блоков: грань рендерится на границе с воздухом ИЛИ стеклом
-                            showFace = (neighborType == BLOCK_AIR || neighborType == BLOCK_GLASS);
+                            showFace = isBlockTransparent(neighborType);
                         }
                     }
 
@@ -5613,6 +5952,7 @@ void Chunk::update() {
     }
 }
 --- FILE: .\engine\world\chunk.h ---
+// --- FILE: .\engine\world\chunk.h ---
 #pragma once
 #include <vector>
 #include <string>
@@ -5629,12 +5969,13 @@ enum BlockID : block_t {
     BLOCK_STONE = 3,
     BLOCK_GLASS = 4,
     BLOCK_OAK_LOG = 5,
+    BLOCK_OAK_LEAVES = 6,
 
     BLOCK_TYPES_COUNT
 };
 
 inline bool isBlockTransparent(block_t type) {
-    return type == BLOCK_AIR || type == BLOCK_GLASS;
+    return type == BLOCK_AIR || type == BLOCK_GLASS || type == BLOCK_OAK_LEAVES;
 }
 
 class Chunk {
@@ -6604,7 +6945,8 @@ void WorldUtils::resetPlayerToSpawn(Player& player, World& world) {
     }
     player.position = glm::vec3(spawnX, spawnY - 1.62f, spawnZ);
     player.velocity = glm::vec3(0.0f);
-    player.isGrounded = false;
+    player.isGrounded = true;              // Игрок уже стоит на земле при спавне
+    player.highestY = player.position.y;   // Сбрасываем пиковую высоту падения во избежание ложного урона
     player.camera.position = player.position + glm::vec3(0.0f, player.eyeHeight, 0.0f);
 }
 --- FILE: .\engine\world\world_utils.h ---
@@ -6765,7 +7107,8 @@ void main() {
         vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, TexCoords).r);
         color = vec4(textColor, 1.0) * sampled;
     } else if (isTexture) {
-        color = texture(text, TexCoords);
+        // Умножаем цвет текстуры на solidColor для возможности тонирования элементов UI
+        color = texture(text, TexCoords) * solidColor;
         if (color.a < 0.05) {
             discard;
         }

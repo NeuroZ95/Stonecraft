@@ -299,7 +299,8 @@ void Game::update(float deltaTime) {
         }
     }
 
-    bool inGame = (menu.getScreen() == Menu::Screen::None || menu.getScreen() == Menu::Screen::Pause) && !isMultiplayerLoading;
+    // Разрешаем обработку игрового окружения, когда открыт экран Respawn
+    bool inGame = (menu.getScreen() == Menu::Screen::None || menu.getScreen() == Menu::Screen::Pause || menu.getScreen() == Menu::Screen::Respawn) && !isMultiplayerLoading;
 
     // Контроль ESC для входа / выхода из меню паузы
     bool escPressed = (glfwGetKey(Window::handle, GLFW_KEY_ESCAPE) == GLFW_PRESS);
@@ -399,7 +400,10 @@ void Game::update(float deltaTime) {
                             player.selectedSlot = savedSlot;
                             for (int i = 0; i < 9; ++i) player.hotbar[i] = savedHotbar[i];
                             player.velocity = glm::vec3(0.0f);
-                            player.isGrounded = false;
+                            player.isGrounded = true;
+                            player.highestY = player.position.y;
+                            player.health = player.maxHealth;
+                            player.regenTimer = 0.0f;
                         }
                         else {
                             Logger::log(Logger::Level::WARNING, "World save details not found. Creating default...");
@@ -551,6 +555,27 @@ void Game::update(float deltaTime) {
                     Window::isCursorLocked = false;
                 }
             }
+            else if (menu.getScreen() == Menu::Screen::Respawn) {
+                if (clickedBtn == 0) { // Нажатие кнопки возрождения
+                    player.isDead = false;
+                    player.deathTime = 0.0f;
+                    player.camera.deathRollOffset = 0.0f;
+
+                    // Возрождаем игрока в мире
+                    WorldUtils::resetPlayerToSpawn(player, world);
+                    player.health = player.maxHealth;
+                    player.highestY = player.position.y;
+                    player.regenTimer = 0.0f;
+
+                    leftMousePressed = false;
+                    rightMousePressed = false;
+
+                    menu.setScreen(Menu::Screen::None);
+                    glfwSetInputMode(Window::handle, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                    Window::isCursorLocked = true;
+                    player.firstMouse = true;
+                }
+            }
         }
         uiLeftMousePressed = uiLeftMouse;
     }
@@ -596,7 +621,8 @@ void Game::render(float deltaTime) {
         }
     }
 
-    bool inGame = (menu.getScreen() == Menu::Screen::None || menu.getScreen() == Menu::Screen::Pause) && !isMultiplayerLoading;
+    // Переменная inGame теперь включает в себя экран Respawn, чтобы мир продолжал отрисовываться под ним
+    bool inGame = (menu.getScreen() == Menu::Screen::None || menu.getScreen() == Menu::Screen::Pause || menu.getScreen() == Menu::Screen::Respawn) && !isMultiplayerLoading;
 
     if (inGame) {
         glClearColor(0.5f, 0.7f, 0.9f, 1.0f);
@@ -628,6 +654,14 @@ void Game::render(float deltaTime) {
         glUniform1f(glGetUniformLocation(ourShader->ID, "brightness"), g_Settings.brightness);
         glUniform1i(glGetUniformLocation(ourShader->ID, "rtxEnabled"), g_Settings.rtxEnabled ? 1 : 0);
 
+        // Передаем фактор смерти для пост-обработки в шейдере мира
+        float deathFactor = 0.0f;
+        if (player.isDead) {
+            float t = player.deathTime;
+            deathFactor = t * (2.0f - t); // Плавный квадратичный ease-out
+        }
+        glUniform1f(glGetUniformLocation(ourShader->ID, "deathFactor"), deathFactor);
+
         float rtxMaxDistance = 50.0f;
         if (g_Settings.rtxQuality == 0) rtxMaxDistance = 32.0f;
         else if (g_Settings.rtxQuality == 1) rtxMaxDistance = 64.0f;
@@ -638,7 +672,8 @@ void Game::render(float deltaTime) {
         glUniform3fv(glGetUniformLocation(ourShader->ID, "cameraPos"), 1, glm::value_ptr(player.camera.position));
 
         glm::mat4 model = glm::mat4(1.0f);
-        glm::mat4 view = glm::lookAt(glm::vec3(0.0f), player.camera.front, player.camera.up);
+        // Запрашиваем матрицу вида с эффектом тряски в относительных координатах
+        glm::mat4 view = player.camera.getViewMatrix(true);
         glm::mat4 projection = glm::perspective(glm::radians(g_Settings.fov), static_cast<float>(Window::width) / static_cast<float>(Window::height), 0.01f, 200.0f);
 
         unsigned int modelLoc = glGetUniformLocation(ourShader->ID, "model");

@@ -45,6 +45,7 @@ void WorldUtils::resetPlayerToSpawn(Player& player, World& world) {
     }
     player.position = glm::vec3(spawnX, spawnY - 1.62f, spawnZ);
     player.velocity = glm::vec3(0.0f);
-    player.isGrounded = false;
+    player.isGrounded = true;              // Игрок уже стоит на земле при спавне
+    player.highestY = player.position.y;   // Сбрасываем пиковую высоту падения во избежание ложного урона
     player.camera.position = player.position + glm::vec3(0.0f, player.eyeHeight, 0.0f);
 }
