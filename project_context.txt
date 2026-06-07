@@ -2,6 +2,8 @@
 .
 ├── CMakeLists.txt
 ├── CMakeSettings.json
+├── LICENSE.txt
+├── README.md
 ├── defs.h
 ├── engine
 │   ├── gameplay

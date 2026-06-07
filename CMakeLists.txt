@@ -51,6 +51,8 @@ set(SOURCES
     engine/window/window.cpp
     engine/window/window.h
     
+    engine/gameplay/game.cpp
+    engine/gameplay/game.h
     engine/gameplay/camera.cpp
     engine/gameplay/camera.h
     engine/gameplay/player.cpp
@@ -77,6 +79,10 @@ set(SOURCES
     engine/world/perlin.h
     engine/world/world.cpp
     engine/world/world.h
+    engine/world/world_utils.cpp
+    engine/world/world_utils.h
+    engine/world/save_manager.cpp
+    engine/world/save_manager.h
     
     # Сетевой код
     engine/network/enet_impl.cpp
@@ -87,6 +93,8 @@ set(SOURCES
     engine/network/protocol.h
     engine/network/server.cpp
     engine/network/server.h
+    engine/network/lan_discovery.cpp
+    engine/network/lan_discovery.h
 )
 
 add_executable(Stonecraft ${SOURCES})
