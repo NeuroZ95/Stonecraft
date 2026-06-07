@@ -22,7 +22,8 @@ Player::Player(glm::vec3 startPosition) : camera(startPosition) {
     hotbar[1] = BLOCK_GRASS;
     hotbar[2] = BLOCK_STONE;
     hotbar[3] = BLOCK_GLASS;
-    hotbar[4] = BLOCK_OAK_LOG; // Заняли пятый слот дубовым бревном
+    hotbar[4] = BLOCK_OAK_LOG;     // Заняли пятый слот дубовым бревном
+    hotbar[5] = BLOCK_OAK_LEAVES;  // Добавили листья дуба в шестой слот
 }
 
 void Player::update(float deltaTime, World& world) {

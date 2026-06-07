@@ -227,7 +227,7 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
         return blocks;
     }
 
-    // Default World (с холмами, биомами и спавном деревьев)
+    // Pass 1: Генерация базового рельефа чанка
     for (int x = 0; x < 16; ++x) {
         for (int z = 0; z < 16; ++z) {
             int worldX = cx * 16 + x;
@@ -247,7 +247,6 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
             if (surfaceHeight < 5) surfaceHeight = 5;
             if (surfaceHeight >= 64) surfaceHeight = 64 - 1;
 
-            // Генерация базового рельефа
             for (int y = 0; y < 64; ++y) {
                 block_t blockType = 0;
 
@@ -272,42 +271,117 @@ std::vector<block_t> NetworkServer::generateChunkBlocks(int cx, int cz, const Pe
 
                 blocks[(x * 64 + y) * 16 + z] = blockType;
             }
+        }
+    }
 
-            // Биомы и спавн дубовых брёвен
-            float biomeVal = noise.noise(worldX * 0.005f, worldZ * 0.005f);
+    // Pass 2: Упреждающий спавн деревьев
+    int worldStartX = cx * 16;
+    int worldStartZ = cz * 16;
+
+    for (int wx = worldStartX - 3; wx < worldStartX + 16 + 3; ++wx) {
+        for (int wz = worldStartZ - 3; wz < worldStartZ + 16 + 3; ++wz) {
+            float biomeVal = noise.noise(wx * 0.005f, wz * 0.005f);
             float spawnProb = 0.0f;
 
             if (biomeVal < -0.4f) {
-                spawnProb = 0.0f; // Степь (деревьев нет)
+                spawnProb = 0.0f;
             }
             else if (biomeVal < 0.0f) {
-                spawnProb = 0.002f; // Поляны (сверхнизкая плотность)
+                spawnProb = 0.002f;
             }
             else if (biomeVal < 0.4f) {
-                spawnProb = 0.012f; // Степь, окруженная огромными лесами (редкие деревья)
+                spawnProb = 0.012f;
             }
             else {
-                spawnProb = 0.055f; // Леса (высокая плотность)
+                spawnProb = 0.055f;
             }
 
             if (spawnProb > 0.0f) {
-                unsigned int hashVal = seed ^ (worldX * 73856093) ^ (worldZ * 19349663);
+                unsigned int hashVal = seed ^ (wx * 73856093) ^ (wz * 19349663);
                 hashVal = (hashVal ^ 61) ^ (hashVal >> 16);
                 hashVal *= 9;
                 hashVal = hashVal ^ (hashVal >> 11);
                 float randVal = static_cast<float>(hashVal & 0xFFFF) / 65535.0f;
 
                 if (randVal < spawnProb) {
-                    if (blocks[(x * 64 + surfaceHeight) * 16 + z] == 2) { // BLOCK_GRASS
-                        unsigned int heightHash = hashVal ^ 38241243;
-                        int treeHeight = 4 + (heightHash % 3); // Высота 4-6 блоков
+                    float continentalness = noise.noise(wx * 0.003f, wz * 0.003f);
+                    float hills = noise.noise(wx * 0.015f, wz * 0.015f);
+                    float detail = noise.noise(wx * 0.06f, wz * 0.06f);
 
-                        blocks[(x * 64 + surfaceHeight) * 16 + z] = 1; // Превращаем траву под деревом в землю
+                    float baseHeight = 32.0f;
+                    float mountainShape = continentalness * 16.0f;
+                    float hillShape = hills * 6.0f;
+                    float detailShape = detail * 1.5f;
 
+                    int surfaceHeight = static_cast<int>(baseHeight + mountainShape + hillShape + detailShape);
+                    if (surfaceHeight < 5) surfaceHeight = 5;
+                    if (surfaceHeight >= 64) surfaceHeight = 63;
+
+                    unsigned int heightHash = hashVal ^ 38241243;
+                    int treeHeight = 4 + (heightHash % 3);
+
+                    // Если ствол находится внутри границ текущего чанка
+                    if (wx >= worldStartX && wx < worldStartX + 16 &&
+                        wz >= worldStartZ && wz < worldStartZ + 16) {
+                        int localX = wx - worldStartX;
+                        int localZ = wz - worldStartZ;
+
+                        blocks[(localX * 64 + surfaceHeight) * 16 + localZ] = 1; // Превращаем траву в землю
                         for (int th = 1; th <= treeHeight; ++th) {
                             int ly = surfaceHeight + th;
                             if (ly < 64) {
-                                blocks[(x * 64 + ly) * 16 + z] = 5; // BLOCK_OAK_LOG
+                                blocks[(localX * 64 + ly) * 16 + localZ] = 5; // BLOCK_OAK_LOG
+                            }
+                        }
+                    }
+
+                    // Накладываем крону листьев по шаблону
+                    int topY = surfaceHeight + treeHeight;
+                    for (int ly = topY - 2; ly <= topY + 1; ++ly) {
+                        if (ly >= 64) continue;
+                        int relativeY = ly - topY;
+                        int radius = 2;
+
+                        if (relativeY == 1) {
+                            radius = 1;
+                        }
+                        else if (relativeY == 0) {
+                            radius = 2;
+                        }
+                        else if (relativeY == -1) {
+                            radius = 3;
+                        }
+                        else if (relativeY == -2) {
+                            radius = 2;
+                        }
+
+                        for (int ldx = -radius; ldx <= radius; ++ldx) {
+                            for (int ldz = -radius; ldz <= radius; ++ldz) {
+                                if (radius == 1) {
+                                    if (std::abs(ldx) == 1 && std::abs(ldz) == 1) continue;
+                                }
+                                else if (radius == 2) {
+                                    if (std::abs(ldx) == 2 && std::abs(ldz) == 2) continue;
+                                }
+                                else if (radius == 3) {
+                                    if (std::abs(ldx) == 3 && std::abs(ldz) == 3) continue;
+                                    if (std::abs(ldx) + std::abs(ldz) >= 5) continue;
+                                }
+
+                                int leafWorldX = wx + ldx;
+                                int leafWorldZ = wz + ldz;
+
+                                if (leafWorldX >= worldStartX && leafWorldX < worldStartX + 16 &&
+                                    leafWorldZ >= worldStartZ && leafWorldZ < worldStartZ + 16) {
+                                    int localLX = leafWorldX - worldStartX;
+                                    int localLZ = leafWorldZ - worldStartZ;
+
+                                    size_t idx = (localLX * 64 + ly) * 16 + localLZ;
+                                    block_t current = blocks[idx];
+                                    if (current == 0 || current == 6) { // BLOCK_AIR или BLOCK_OAK_LEAVES
+                                        blocks[idx] = 6; // BLOCK_OAK_LEAVES
+                                    }
+                                }
                             }
                         }
                     }

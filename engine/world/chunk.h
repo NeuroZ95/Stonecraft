@@ -1,3 +1,4 @@
+// --- FILE: .\engine\world\chunk.h ---
 #pragma once
 #include <vector>
 #include <string>
@@ -14,12 +15,13 @@ enum BlockID : block_t {
     BLOCK_STONE = 3,
     BLOCK_GLASS = 4,
     BLOCK_OAK_LOG = 5,
+    BLOCK_OAK_LEAVES = 6,
 
     BLOCK_TYPES_COUNT
 };
 
 inline bool isBlockTransparent(block_t type) {
-    return type == BLOCK_AIR || type == BLOCK_GLASS;
+    return type == BLOCK_AIR || type == BLOCK_GLASS || type == BLOCK_OAK_LEAVES;
 }
 
 class Chunk {

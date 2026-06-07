@@ -1,3 +1,4 @@
+// --- FILE: .\engine\world\chunk.cpp ---
 #include "chunk.h"
 #include <GL/glew.h>
 #include <cmath>
@@ -41,7 +42,7 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
         return;
     }
 
-    // Default World (с холмами, биомами и деревьями)
+    // Pass 1: Генерация базового рельефа чанка
     for (int x = 0; x < CHUNK_SIZE; ++x) {
         for (int z = 0; z < CHUNK_SIZE; ++z) {
             int worldX = chunkX * CHUNK_SIZE + x;
@@ -61,7 +62,6 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
             if (surfaceHeight < 5) surfaceHeight = 5;
             if (surfaceHeight >= CHUNK_HEIGHT) surfaceHeight = CHUNK_HEIGHT - 1;
 
-            // Заполнение слоёв ландшафта
             for (int y = 0; y < CHUNK_HEIGHT; ++y) {
                 block_t blockType = BLOCK_AIR;
 
@@ -86,45 +86,118 @@ void Chunk::generate(const PerlinNoise& noise, unsigned int seed, int worldType)
 
                 setBlock(x, y, z, blockType);
             }
+        }
+    }
 
-            // Определение биома и спавн дубовых брёвен
-            float biomeVal = noise.noise(worldX * 0.005f, worldZ * 0.005f);
+    // Pass 2: Упреждающий спавн деревьев (сканируем также и соседние границы в радиусе 3 блоков)
+    int worldStartX = chunkX * CHUNK_SIZE;
+    int worldStartZ = chunkZ * CHUNK_SIZE;
+
+    for (int wx = worldStartX - 3; wx < worldStartX + CHUNK_SIZE + 3; ++wx) {
+        for (int wz = worldStartZ - 3; wz < worldStartZ + CHUNK_SIZE + 3; ++wz) {
+            float biomeVal = noise.noise(wx * 0.005f, wz * 0.005f);
             float spawnProb = 0.0f;
 
             if (biomeVal < -0.4f) {
-                spawnProb = 0.0f; // Степь (деревьев нет)
+                spawnProb = 0.0f;
             }
             else if (biomeVal < 0.0f) {
-                spawnProb = 0.002f; // Поляны (сверхнизкая плотность)
+                spawnProb = 0.002f;
             }
             else if (biomeVal < 0.4f) {
-                spawnProb = 0.012f; // Степь, окруженная огромными лесами (редкие деревья)
+                spawnProb = 0.012f;
             }
             else {
-                spawnProb = 0.055f; // Леса (высокая плотность)
+                spawnProb = 0.055f;
             }
 
             if (spawnProb > 0.0f) {
-                // Детерминированный хэш на основе координат и сида мира
-                unsigned int hashVal = seed ^ (worldX * 73856093) ^ (worldZ * 19349663);
+                unsigned int hashVal = seed ^ (wx * 73856093) ^ (wz * 19349663);
                 hashVal = (hashVal ^ 61) ^ (hashVal >> 16);
                 hashVal *= 9;
                 hashVal = hashVal ^ (hashVal >> 11);
                 float randVal = static_cast<float>(hashVal & 0xFFFF) / 65535.0f;
 
                 if (randVal < spawnProb) {
-                    if (getBlock(x, surfaceHeight, z) == BLOCK_GRASS) {
-                        unsigned int heightHash = hashVal ^ 38241243;
-                        int treeHeight = 4 + (heightHash % 3); // Выдает высоту от 4 до 6
+                    // Рассчитываем высоту поверхности для данной координаты (wx, wz)
+                    float continentalness = noise.noise(wx * 0.003f, wz * 0.003f);
+                    float hills = noise.noise(wx * 0.015f, wz * 0.015f);
+                    float detail = noise.noise(wx * 0.06f, wz * 0.06f);
 
-                        // Превращаем траву под деревом в землю
-                        setBlock(x, surfaceHeight, z, BLOCK_DIRT);
+                    float baseHeight = 32.0f;
+                    float mountainShape = continentalness * 16.0f;
+                    float hillShape = hills * 6.0f;
+                    float detailShape = detail * 1.5f;
 
-                        // Выращиваем ствол из дубовых брёвен
+                    int surfaceHeight = static_cast<int>(baseHeight + mountainShape + hillShape + detailShape);
+                    if (surfaceHeight < 5) surfaceHeight = 5;
+                    if (surfaceHeight >= CHUNK_HEIGHT) surfaceHeight = CHUNK_HEIGHT - 1;
+
+                    unsigned int heightHash = hashVal ^ 38241243;
+                    int treeHeight = 4 + (heightHash % 3);
+
+                    // Если ствол дерева находится внутри нашего чанка, строим его
+                    if (wx >= worldStartX && wx < worldStartX + CHUNK_SIZE &&
+                        wz >= worldStartZ && wz < worldStartZ + CHUNK_SIZE) {
+                        int localX = wx - worldStartX;
+                        int localZ = wz - worldStartZ;
+
+                        setBlock(localX, surfaceHeight, localZ, BLOCK_DIRT);
                         for (int th = 1; th <= treeHeight; ++th) {
                             int ly = surfaceHeight + th;
                             if (ly < CHUNK_HEIGHT) {
-                                setBlock(x, ly, z, BLOCK_OAK_LOG);
+                                setBlock(localX, ly, localZ, BLOCK_OAK_LOG);
+                            }
+                        }
+                    }
+
+                    // Рассчитываем и накладываем крону листьев (даже если само дерево за границей чанка)
+                    int topY = surfaceHeight + treeHeight;
+                    for (int ly = topY - 2; ly <= topY + 1; ++ly) {
+                        if (ly >= CHUNK_HEIGHT) continue;
+                        int relativeY = ly - topY;
+                        int radius = 2;
+
+                        if (relativeY == 1) {
+                            radius = 1; // 1 блок над верхним бревном
+                        }
+                        else if (relativeY == 0) {
+                            radius = 2;
+                        }
+                        else if (relativeY == -1) {
+                            radius = 3; // Максимальный радиус в 3 блока
+                        }
+                        else if (relativeY == -2) {
+                            radius = 2;
+                        }
+
+                        for (int ldx = -radius; ldx <= radius; ++ldx) {
+                            for (int ldz = -radius; ldz <= radius; ++ldz) {
+                                if (radius == 1) {
+                                    if (std::abs(ldx) == 1 && std::abs(ldz) == 1) continue;
+                                }
+                                else if (radius == 2) {
+                                    if (std::abs(ldx) == 2 && std::abs(ldz) == 2) continue;
+                                }
+                                else if (radius == 3) {
+                                    if (std::abs(ldx) == 3 && std::abs(ldz) == 3) continue;
+                                    if (std::abs(ldx) + std::abs(ldz) >= 5) continue;
+                                }
+
+                                int leafWorldX = wx + ldx;
+                                int leafWorldZ = wz + ldz;
+
+                                // Размещаем листья только в том случае, если они попадают в границы текущего чанка
+                                if (leafWorldX >= worldStartX && leafWorldX < worldStartX + CHUNK_SIZE &&
+                                    leafWorldZ >= worldStartZ && leafWorldZ < worldStartZ + CHUNK_SIZE) {
+                                    int localLX = leafWorldX - worldStartX;
+                                    int localLZ = leafWorldZ - worldStartZ;
+
+                                    block_t current = getBlock(localLX, ly, localLZ);
+                                    if (current == BLOCK_AIR || current == BLOCK_OAK_LEAVES) {
+                                        setBlock(localLX, ly, localLZ, BLOCK_OAK_LEAVES);
+                                    }
+                                }
                             }
                         }
                     }
@@ -193,13 +266,15 @@ void Chunk::buildMesh(int totalBlocksInAtlas) {
                     }
                     else {
                         block_t neighborType = getBlock(nx, ny, nz);
-                        if (blockType == BLOCK_GLASS) {
-                            // Для стекла: грань рендерится только на границе с воздухом
-                            showFace = (neighborType == BLOCK_AIR);
+                        if (blockType == BLOCK_OAK_LEAVES) {
+                            // Листья рендерят свои грани перед воздухом, стеклом и другими листьями
+                            showFace = (neighborType == BLOCK_AIR || neighborType == BLOCK_GLASS || neighborType == BLOCK_OAK_LEAVES);
+                        }
+                        else if (blockType == BLOCK_GLASS) {
+                            showFace = (neighborType == BLOCK_AIR || (isBlockTransparent(neighborType) && neighborType != BLOCK_GLASS));
                         }
                         else {
-                            // Для непрозрачных блоков: грань рендерится на границе с воздухом ИЛИ стеклом
-                            showFace = (neighborType == BLOCK_AIR || neighborType == BLOCK_GLASS);
+                            showFace = isBlockTransparent(neighborType);
                         }
                     }
 

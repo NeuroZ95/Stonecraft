@@ -236,6 +236,7 @@ bool Game::init() {
     blockFiles[BLOCK_STONE] = "stone.png";
     blockFiles[BLOCK_GLASS] = "glass.png";
     blockFiles[BLOCK_OAK_LOG] = "oak_log.png";
+    blockFiles[BLOCK_OAK_LEAVES] = "oak_leaves.png"; // Регистрируем текстуру для листьев дуба
 
     blockAtlas = new Texture("textures/blocks", blockFiles);
 
